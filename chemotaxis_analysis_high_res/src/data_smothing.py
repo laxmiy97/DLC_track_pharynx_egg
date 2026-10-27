@@ -36,7 +36,7 @@ def replace_outliers_with_nan(dataframe, columns, threshold):
     return dataframe
 
 
-def apply_smoothing(df, columns, fps, center_point):
+def apply_smoothing(df, columns, fps, center_point, outlier_threshold=None):
     """
     Smooths specified columns in the DataFrame using a rolling window average.
     Window sizes are scaled by the frame rate (fps).
@@ -46,6 +46,8 @@ def apply_smoothing(df, columns, fps, center_point):
         columns (str or list): The column(s) to smooth.
         fps (float): Frames per second, used to scale window sizes.
         center_point (int): The center point index for dynamic column naming.
+        outlier_threshold (float, optional): If given, values outside mean +/- threshold * std are
+            replaced with NaN in a copy used for smoothing only; the original column is left unchanged.
 
     Returns:
         pd.DataFrame: DataFrame with smoothed columns added as new columns.
@@ -72,6 +74,9 @@ def apply_smoothing(df, columns, fps, center_point):
     for column in columns:
         # Use get() with a default value of 10 if the column isn't in the dictionary
         base_window_size = smoothing_params.get(column, 10)
+        # DLC odor columns (any body point) use the same 1 s window as the spline nose
+        if column.startswith(('distance_to_odor_DLC_', 'conc_at_DLC_', 'dC_DLC_', 'd_DLC_')):
+            base_window_size = 1
 
         # Scale window size by fps
         window_size = max(1, int(base_window_size * fps))
@@ -84,8 +89,12 @@ def apply_smoothing(df, columns, fps, center_point):
             print(
                 f"Column '{column}' is not in the smoothing dictionary (using default window size: {window_size} frames)")
 
+        source = df[column]
+        if outlier_threshold is not None:
+            source = replace_outliers_with_nan(df[[column]].copy(), column, outlier_threshold)[column]
+
         smoothed_column_name = f"{column}_smoothed"
-        df[smoothed_column_name] = df[column].rolling(
+        df[smoothed_column_name] = source.rolling(
             window=window_size, center=True, min_periods=1
         ).mean()
 

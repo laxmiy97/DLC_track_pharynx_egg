@@ -1215,9 +1215,10 @@ def save_chemotaxis_analysis_h5(
             'X_rel_skel_pos_0', 'Y_rel_skel_pos_0',
             'X_rel_skel_pos_49', 'Y_rel_skel_pos_49',
             'X_rel_skel_pos_centroid_raw', 'Y_rel_skel_pos_centroid_raw',
-            'X_rel_DLC_nose', 'Y_rel_DLC_nose',
-            'X_rel_DLC_tail', 'Y_rel_DLC_tail'
         ]
+        # DLC body point positions (nose, pharynx, tail, ...)
+        position_columns += [col for col in df_worm_parameter.columns
+                             if col.startswith(('X_rel_DLC_', 'Y_rel_DLC_'))]
 
         for col in position_columns:
             if col in df_worm_parameter.columns:
@@ -1236,7 +1237,6 @@ def save_chemotaxis_analysis_h5(
             'curving_angle', 'curving_angle_smoothed',
             'distance_to_border_centroid', 'distance_to_border_nose',
             'distance_to_border_centroid_smoothed', 'distance_to_border_nose_smoothed',
-            'distance_to_border_DLC_nose', 'distance_to_border_DLC_tail',
             'behaviour_state', 'turns', 'reversal_onset', 'reversal_end',
             'reversal_frequency', 'reversal_frequency_smoothed',
             'speed_centroid_smoothed', f'speed_center_{center_point}_smoothed',
@@ -1245,6 +1245,8 @@ def save_chemotaxis_analysis_h5(
             f'{center_point}_dx_dt', f'{center_point}_dy_dt', f'{center_point}_displacement_vector_degrees',
             f'{center_point}_displacement_magnitude'
         ]
+        odor_independent_columns += [col for col in df_worm_parameter.columns
+                                     if col.startswith('distance_to_border_DLC_')]
 
         for col in odor_independent_columns:
             if col in df_worm_parameter.columns:
@@ -1265,9 +1267,10 @@ def save_chemotaxis_analysis_h5(
             distances_group = real_odor_group.create_group('distances')
             distance_columns = [
                 'distance_to_odor_stage', 'distance_to_odor_centroid', 'distance_to_odor_0',
-                'distance_to_odor_DLC_nose', 'distance_to_odor_DLC_tail',
                 'distance_to_odor_centroid_smoothed', 'distance_to_odor_0_smoothed'
             ]
+            distance_columns += [col for col in df_worm_parameter.columns
+                                 if col.startswith('distance_to_odor_DLC_')]
 
             for col in distance_columns:
                 if col in df_worm_parameter.columns:
@@ -1276,10 +1279,13 @@ def save_chemotaxis_analysis_h5(
             # Concentrations subgroup
             concentrations_group = real_odor_group.create_group('concentrations')
             concentration_columns = [
-                'conc_at_centroid', 'conc_at_0', 'conc_at_DLC_nose', 'conc_at_DLC_tail',
-                'dC_centroid', 'dC_0', 'dC_DLC_nose', 'dC_DLC_tail', 'd_DLC_nose_tail_C',
+                'conc_at_centroid', 'conc_at_0',
+                'dC_centroid', 'dC_0',
                 'conc_at_centroid_smoothed', 'conc_at_0_smoothed', 'dC_centroid_smoothed', 'dC_0_smoothed'
             ]
+            # DLC concentrations, dC and pairwise differences for every body point (raw + smoothed)
+            concentration_columns += [col for col in df_worm_parameter.columns
+                                      if col.startswith(('conc_at_DLC_', 'dC_DLC_', 'd_DLC_'))]
 
             for col in concentration_columns:
                 if col in df_worm_parameter.columns:

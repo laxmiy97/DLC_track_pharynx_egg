@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import re
-from .calculations import interpolate_df, correct_dlc_coordinates
+from .calculations import interpolate_df, correct_dlc_point
 
 
 def validate_file_readability(file_path):
@@ -157,17 +157,16 @@ def validate_csv_structure(df, file_path, expected_columns=None):
     print(f"  CSV structure validation passed for: {file_path}")
 
 
-def load_dlc_coordinates(dlc_file_path, nose_label, tail_label):
+def load_dlc_coordinates(dlc_file_path, labels):
     """
-    Load DLC h5 file and extract nose and tail coordinates.
+    Load DLC h5 file and extract the coordinates of the requested body points.
 
     Parameters:
     dlc_file_path (str): Path to the DLC h5 file
-    nose_label (str): Label for the nose in the DLC file
-    tail_label (str): Label for the tail in the DLC file
+    labels (dict): {point_name: dlc_label}, e.g. {'nose': 'nose', 'pharynx': 'pharynx', 'tail': 'tail'}
 
     Returns:
-    tuple: Two DataFrames containing (nose_coordinates, tail_coordinates)
+    dict: {point_name: DataFrame with 'x', 'y' pixel coordinates}, or None if loading fails
     """
     try:
         # Load the h5 file
@@ -176,23 +175,17 @@ def load_dlc_coordinates(dlc_file_path, nose_label, tail_label):
         # Get the scorer (first level of multi-index)
         scorer = df.columns.get_level_values(0)[0]
 
-        # Extract nose coordinates
-        nose_coords = pd.DataFrame({
-            'x': df[scorer][nose_label]['x'].values,
-            'y': df[scorer][nose_label]['y'].values
-        })
-
-        # Extract tail coordinates
-        tail_coords = pd.DataFrame({
-            'x': df[scorer][tail_label]['x'].values,
-            'y': df[scorer][tail_label]['y'].values
-        })
-
-        return nose_coords, tail_coords
+        return {
+            point: pd.DataFrame({
+                'x': df[scorer][label]['x'].values,
+                'y': df[scorer][label]['y'].values
+            })
+            for point, label in labels.items()
+        }
 
     except Exception as e:
         print(f"Error loading DLC file: {e}")
-        return None, None
+        return None
 
 
 def read_csv_files(beh_annotation_path: str, skeleton_spline_path: str, worm_pos_path: str,
@@ -393,7 +386,7 @@ def read_csv_files(beh_annotation_path: str, skeleton_spline_path: str, worm_pos
             dataframes['spline_X'], dataframes['spline_Y'], dataframes['turn_annotation'])
 
 
-def add_dlc_coordinates(df: pd.DataFrame, dlc_file_path: str, nose_label: str, tail_label: str,
+def add_dlc_coordinates(df: pd.DataFrame, dlc_file_path: str, labels: dict,
                         video_resolution_x: int, video_resolution_y: int,
                         factor_px_to_mm: float, img_type: str) -> pd.DataFrame:
     """
@@ -405,8 +398,9 @@ def add_dlc_coordinates(df: pd.DataFrame, dlc_file_path: str, nose_label: str, t
         Main DataFrame
     dlc_file_path : str
         Path to DLC h5 file
-    nose_label, tail_label : str
-        DLC labels for nose and tail
+    labels : dict
+        {point_name: dlc_label}, e.g. {'nose': 'nose', 'pharynx': 'pharynx', 'tail': 'tail'}.
+        Adds columns 'X_rel_DLC_<point_name>' and 'Y_rel_DLC_<point_name>'.
     video_resolution_x, video_resolution_y : int
         Video resolution
     factor_px_to_mm : float
@@ -421,31 +415,30 @@ def add_dlc_coordinates(df: pd.DataFrame, dlc_file_path: str, nose_label: str, t
     """
     print(f"Processing DLC file: {dlc_file_path}")
 
-    # Load nose and tail coordinates from DLC file
-    nose_coords, tail_coords = load_dlc_coordinates(dlc_file_path, nose_label, tail_label)
+    # Load coordinates of all requested body points from DLC file
+    dlc_coords = load_dlc_coordinates(dlc_file_path, labels)
 
-    if nose_coords is not None and tail_coords is not None:
-        # Convert DLC coordinates to mm and correct based on video origin
-        nose_mm, tail_mm = correct_dlc_coordinates(
-            df, nose_coords, tail_coords, video_resolution_x, video_resolution_y,
-            factor_px_to_mm, img_type
-        )
+    if dlc_coords is not None:
+        for point, coords in dlc_coords.items():
+            # Convert DLC coordinates to mm and correct based on video origin
+            point_mm = correct_dlc_point(
+                df, coords, point, video_resolution_x, video_resolution_y,
+                factor_px_to_mm, img_type
+            )
 
-        # Check if lengths match (they should)
-        if len(df) != len(nose_mm):
-            print(f"Warning: DLC data length ({len(nose_mm)}) doesn't match main data length ({len(df)})")
-            print("This is unexpected since both should come from the same video frames.")
+            # Check if lengths match (they should)
+            if len(df) != len(point_mm):
+                print(f"Warning: DLC data length ({len(point_mm)}) doesn't match main data length ({len(df)})")
+                print("This is unexpected since both should come from the same video frames.")
 
-        # Add DLC coordinates to the main DataFrame
-        # Use the min length to avoid index errors in case the lengths differ slightly
-        min_length = min(len(df), len(nose_mm))
+            # Use the min length to avoid index errors in case the lengths differ slightly;
+            # frames without DLC data are left as NaN
+            min_length = min(len(df), len(point_mm))
 
-        df['X_rel_DLC_nose'] = nose_mm['X_rel_DLC_nose'].values[:min_length]
-        df['Y_rel_DLC_nose'] = nose_mm['Y_rel_DLC_nose'].values[:min_length]
-        df['X_rel_DLC_tail'] = tail_mm['X_rel_DLC_tail'].values[:min_length]
-        df['Y_rel_DLC_tail'] = tail_mm['Y_rel_DLC_tail'].values[:min_length]
+            for col in [f'X_rel_DLC_{point}', f'Y_rel_DLC_{point}']:
+                df[col] = pd.Series(point_mm[col].values[:min_length], index=df.index[:min_length])
 
-        print(f"Added DLC tracking data to main DataFrame")
+        print(f"Added DLC tracking data to main DataFrame: {list(dlc_coords)}")
 
     return df
 

@@ -86,33 +86,31 @@ def correct_stage_pos_with_skeleton(
 
     return worm_pos
 
-def correct_dlc_coordinates(
+def correct_dlc_point(
         worm_pos: pd.DataFrame,
-        dlc_nose_coords: pd.DataFrame,
-        dlc_tail_coords: pd.DataFrame,
+        dlc_coords: pd.DataFrame,
+        point_name: str,
         video_resolution_x: int,
         video_resolution_y: int,
         factor_px_to_mm: float,
         video_origin: str
-) -> tuple:
+) -> pd.DataFrame:
     """
-    Convert DLC coordinates from pixels to absolute millimeter positions inside the arena,
+    Convert one DLC body point from pixels to absolute millimeter positions inside the arena,
     correcting for the stage-encoded worm position and video origin.
 
     Parameters:
     worm_pos (pd.DataFrame): DataFrame containing the stage-based worm positions:
                              must have columns 'X_rel' and 'Y_rel' (in mm).
-    dlc_nose_coords (pd.DataFrame): DataFrame with nose 'x','y' pixel coordinates.
-    dlc_tail_coords (pd.DataFrame): DataFrame with tail 'x','y' pixel coordinates.
+    dlc_coords (pd.DataFrame): DataFrame with 'x','y' pixel coordinates (x = image column, y = image row).
+    point_name (str): Name used for the output columns, e.g. 'nose' -> 'X_rel_DLC_nose'.
     video_resolution_x (int): Width of the video in pixels.
     video_resolution_y (int): Height of the video in pixels.
     factor_px_to_mm (float): Conversion factor from pixels to millimeters.
     video_origin (str): Origin of the video. One of 'zim01', 'zim06', or 'crop'.
 
     Returns:
-    tuple: Two DataFrames (nose, tail) each with new columns:
-           'X_rel_DLC_nose', 'Y_rel_DLC_nose' or
-           'X_rel_DLC_tail', 'Y_rel_DLC_tail' giving absolute arena positions.
+    pd.DataFrame: Copy of dlc_coords with new columns 'X_rel_DLC_{point_name}', 'Y_rel_DLC_{point_name}'.
     """
     # Ensure numeric types
     video_resolution_x = int(video_resolution_x)
@@ -123,48 +121,72 @@ def correct_dlc_coordinates(
     center_x = video_resolution_x / 2.0
     center_y = video_resolution_y / 2.0
 
-    # Copy to avoid modifying originals
-    nose = dlc_nose_coords.copy()
-    tail = dlc_tail_coords.copy()
+    point = dlc_coords.copy()
 
-    # Pixel offsets from center
-    dx_n = nose['x'] - center_x
-    dy_n = nose['y'] - center_y
-    dx_t = tail['x'] - center_x
-    dy_t = tail['y'] - center_y
+    # Pixel offsets from center converted to mm
+    mx = (point['x'] - center_x) * factor_px_to_mm
+    my = (point['y'] - center_y) * factor_px_to_mm
 
-    # Convert pixel offsets to mm
-    mx_n = dx_n * factor_px_to_mm
-    my_n = dy_n * factor_px_to_mm
-    mx_t = dx_t * factor_px_to_mm
-    my_t = dy_t * factor_px_to_mm
+    x_col, y_col = f'X_rel_DLC_{point_name}', f'Y_rel_DLC_{point_name}'
 
     # Apply origin-specific sign and add stage pos
     if video_origin == 'zim01':
         # X shifts subtract, Y shifts add
-        nose['X_rel_DLC_nose'] = worm_pos['X_rel'] - mx_n
-        nose['Y_rel_DLC_nose'] = worm_pos['Y_rel'] + my_n
-        tail['X_rel_DLC_tail'] = worm_pos['X_rel'] - mx_t
-        tail['Y_rel_DLC_tail'] = worm_pos['Y_rel'] + my_t
+        point[x_col] = worm_pos['X_rel'] - mx
+        point[y_col] = worm_pos['Y_rel'] + my
 
     elif video_origin == 'zim06':
-        # X shifts add, Y shifts subtract
-        nose['X_rel_DLC_nose'] = worm_pos['X_rel'] + mx_n
-        nose['Y_rel_DLC_nose'] = worm_pos['Y_rel'] - my_n
-        tail['X_rel_DLC_tail'] = worm_pos['X_rel'] + mx_t
-        tail['Y_rel_DLC_tail'] = worm_pos['Y_rel'] - my_t
+        # The zim06 stage transform swaps axes (X_rel comes from stage Y), and the spline CSVs are
+        # stored as (row, column). DLC is (column, row), so the image axes are swapped here to land
+        # on the same stage axes as the spline (validated against imutils bodyparts_coordinates.py)
+        point[x_col] = worm_pos['X_rel'] + my
+        point[y_col] = worm_pos['Y_rel'] - mx
 
     elif video_origin == 'crop':
         # No inversion: both X and Y add
-        nose['X_rel_DLC_nose'] = worm_pos['X_rel'] + mx_n
-        nose['Y_rel_DLC_nose'] = worm_pos['Y_rel'] + my_n
-        tail['X_rel_DLC_tail'] = worm_pos['X_rel'] + mx_t
-        tail['Y_rel_DLC_tail'] = worm_pos['Y_rel'] + my_t
+        point[x_col] = worm_pos['X_rel'] + mx
+        point[y_col] = worm_pos['Y_rel'] + my
 
     else:
         raise ValueError(f"Unknown video_origin: {video_origin}")
 
+    return point
+
+
+def correct_dlc_coordinates(
+        worm_pos: pd.DataFrame,
+        dlc_nose_coords: pd.DataFrame,
+        dlc_tail_coords: pd.DataFrame,
+        video_resolution_x: int,
+        video_resolution_y: int,
+        factor_px_to_mm: float,
+        video_origin: str
+) -> tuple:
+    """
+    Backwards-compatible nose/tail wrapper around correct_dlc_point.
+
+    Returns:
+    tuple: Two DataFrames (nose, tail) with 'X_rel_DLC_nose', 'Y_rel_DLC_nose' and
+           'X_rel_DLC_tail', 'Y_rel_DLC_tail' giving absolute arena positions.
+    """
+    nose = correct_dlc_point(worm_pos, dlc_nose_coords, 'nose', video_resolution_x, video_resolution_y,
+                             factor_px_to_mm, video_origin)
+    tail = correct_dlc_point(worm_pos, dlc_tail_coords, 'tail', video_resolution_x, video_resolution_y,
+                             factor_px_to_mm, video_origin)
     return nose, tail
+
+
+# Fixed order of DLC body points, used for naming pairwise differences (e.g. d_DLC_nose_tail_C)
+DLC_POINT_ORDER = ['nose', 'pharynx', 'tail']
+
+
+def get_dlc_points(df: pd.DataFrame) -> list:
+    """
+    Return the DLC body points present in df (from 'X_rel_DLC_<point>' columns), nose -> pharynx -> tail first.
+    """
+    points = [c[len('X_rel_DLC_'):] for c in df.columns
+              if c.startswith('X_rel_DLC_') and f'Y_rel_DLC_{c[len("X_rel_DLC_"):]}' in df.columns]
+    return sorted(points, key=lambda p: (DLC_POINT_ORDER.index(p) if p in DLC_POINT_ORDER else len(DLC_POINT_ORDER), p))
 
 # Define a function to calculate distance while handling NaN
 def calculate_distance(row: pd.Series, x_col: str, y_col: str, x_odor: float, y_odor: float) -> float:
@@ -489,6 +511,7 @@ def calc_signed_speed(df_worm_parameter: pd.DataFrame, ethogram_df: pd.DataFrame
 
 import pandas as pd
 import numpy as np
+from itertools import combinations
 from typing import Optional, Tuple
 
 
@@ -575,16 +598,11 @@ def calculate_all_odor_parameters(
            lambda row: calculate_distance(row, nose_x_col, nose_y_col, x_odor, y_odor), axis=1
        ).astype(float)
 
-   # Distance from DLC nose
-   if 'X_rel_DLC_nose' in df.columns and 'Y_rel_DLC_nose' in df.columns:
-       df['distance_to_odor_DLC_nose'] = df.apply(
-           lambda row: calculate_distance(row, 'X_rel_DLC_nose', 'Y_rel_DLC_nose', x_odor, y_odor), axis=1
-       ).astype(float)
-
-   # Distance from DLC tail
-   if 'X_rel_DLC_tail' in df.columns and 'Y_rel_DLC_tail' in df.columns:
-       df['distance_to_odor_DLC_tail'] = df.apply(
-           lambda row: calculate_distance(row, 'X_rel_DLC_tail', 'Y_rel_DLC_tail', x_odor, y_odor), axis=1
+   # Distance from each DLC body point (nose, pharynx, tail, ...)
+   dlc_points = get_dlc_points(df)
+   for p in dlc_points:
+       df[f'distance_to_odor_DLC_{p}'] = df.apply(
+           lambda row: calculate_distance(row, f'X_rel_DLC_{p}', f'Y_rel_DLC_{p}', x_odor, y_odor), axis=1
        ).astype(float)
 
    # ======================
@@ -611,20 +629,11 @@ def calculate_all_odor_parameters(
                ), axis=1
            ), errors='coerce')
 
-       # Concentration at DLC nose
-       if 'distance_to_odor_DLC_nose' in df.columns:
-           df['conc_at_DLC_nose'] = pd.to_numeric(df.apply(
+       # Concentration at each DLC body point
+       for p in dlc_points:
+           df[f'conc_at_DLC_{p}'] = pd.to_numeric(df.apply(
                lambda row: calculate_preceived_conc(
-                   row['distance_to_odor_DLC_nose'], row['time_seconds'],
-                   conc_gradient_array, distance_array, diffusion_time_offset
-               ), axis=1
-           ), errors='coerce')
-
-       # Concentration at DLC tail
-       if 'distance_to_odor_DLC_tail' in df.columns:
-           df['conc_at_DLC_tail'] = pd.to_numeric(df.apply(
-               lambda row: calculate_preceived_conc(
-                   row['distance_to_odor_DLC_tail'], row['time_seconds'],
+                   row[f'distance_to_odor_DLC_{p}'], row['time_seconds'],
                    conc_gradient_array, distance_array, diffusion_time_offset
                ), axis=1
            ), errors='coerce')
@@ -641,18 +650,16 @@ def calculate_all_odor_parameters(
    if f'conc_at_{skel_pos_0}' in df.columns:
        df[f'dC_{skel_pos_0}'] = df[f'conc_at_{skel_pos_0}'].diff(periods=dC_lookback_frames).astype(float)
 
-   # dC at DLC nose
-   if 'conc_at_DLC_nose' in df.columns:
-       df['dC_DLC_nose'] = df['conc_at_DLC_nose'].diff(periods=dC_lookback_frames).astype(float)
+   # dC at each DLC body point
+   dlc_conc_points = [p for p in dlc_points if f'conc_at_DLC_{p}' in df.columns]
+   for p in dlc_conc_points:
+       df[f'dC_DLC_{p}'] = df[f'conc_at_DLC_{p}'].diff(periods=dC_lookback_frames).astype(float)
 
-   # dC at DLC tail
-   if 'conc_at_DLC_tail' in df.columns:
-       df['dC_DLC_tail'] = df['conc_at_DLC_tail'].diff(periods=dC_lookback_frames).astype(float)
-
-   # Concentration difference between nose and tail (spatial gradient)
-   if 'conc_at_DLC_nose' in df.columns and 'conc_at_DLC_tail' in df.columns:
-       df['d_DLC_nose_tail_C'] = (
-               df['conc_at_DLC_nose'] - df['conc_at_DLC_tail']
+   # Concentration difference between every pair of DLC points, same frame (spatial gradient),
+   # e.g. d_DLC_nose_pharynx_C, d_DLC_nose_tail_C, d_DLC_pharynx_tail_C
+   for a, b in combinations(dlc_conc_points, 2):
+       df[f'd_DLC_{a}_{b}_C'] = (
+               df[f'conc_at_DLC_{a}'] - df[f'conc_at_DLC_{b}']
        ).astype(float)
 
    # ======================
@@ -708,14 +715,9 @@ def calculate_border_distances(df: pd.DataFrame, arena_max_x: float, arena_max_y
     )
 
     # Distance to border from DLC positions if available
-    if 'X_rel_DLC_nose' in df.columns and 'Y_rel_DLC_nose' in df.columns:
-        df['distance_to_border_DLC_nose'] = calculate_min_border_distance(
-            df, arena_max_x, arena_max_y, 'X_rel_DLC_nose', 'Y_rel_DLC_nose'
-        )
-
-    if 'X_rel_DLC_tail' in df.columns and 'Y_rel_DLC_tail' in df.columns:
-        df['distance_to_border_DLC_tail'] = calculate_min_border_distance(
-            df, arena_max_x, arena_max_y, 'X_rel_DLC_tail', 'Y_rel_DLC_tail'
+    for p in get_dlc_points(df):
+        df[f'distance_to_border_DLC_{p}'] = calculate_min_border_distance(
+            df, arena_max_x, arena_max_y, f'X_rel_DLC_{p}', f'Y_rel_DLC_{p}'
         )
 
     return df

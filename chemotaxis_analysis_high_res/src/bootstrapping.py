@@ -102,8 +102,8 @@ def recalculate_odor_dependent_parameters(
 
     # Apply outlier replacement and smoothing if we have columns to process
     if odor_columns_to_smooth:
-        df_temp = replace_outliers_with_nan(df_temp, odor_columns_to_smooth, threshold=2.576)
-        df_temp = apply_smoothing(df_temp, odor_columns_to_smooth, fps, center_point)
+        # Outliers are masked only in the copy used for smoothing; raw columns stay complete
+        df_temp = apply_smoothing(df_temp, odor_columns_to_smooth, fps, center_point, outlier_threshold=2.576)
 
     # Extract results into dictionary format
     result = {

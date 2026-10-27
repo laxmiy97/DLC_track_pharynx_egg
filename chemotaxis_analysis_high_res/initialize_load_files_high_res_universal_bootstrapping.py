@@ -24,6 +24,7 @@ from chemotaxis_analysis_high_res.src.calculations import (
     calc_signed_speed,
     calculate_all_odor_parameters,
     calculate_border_distances,
+    get_dlc_points,
 )
 
 from chemotaxis_analysis_high_res.src.data_loading import (
@@ -99,6 +100,8 @@ def main(arg_list=None):
                         default=None)
     parser.add_argument('--DLC_tail', help='Column name for tail coordinates in the DLC file', required=False,
                         default=None)
+    parser.add_argument('--DLC_pharynx', help='Column name for pharynx coordinates in the DLC file', required=False,
+                        default=None)
     parser.add_argument('--bootstrap_iterations', type=int, default=0,
                         help='Number of bootstrap iterations (0 = no bootstrapping)')
     parser.add_argument('--bootstrap_seed', type=int, default=42, help='Random seed for reproducible bootstrapping')
@@ -133,6 +136,11 @@ def main(arg_list=None):
     bootstrap_seed = int(args.bootstrap_seed)
     dC_lookback_frames = int(args.dC_lookback_frames)
     generate_video = args.generate_video
+
+    # DLC body points to use: {point_name: label in the DLC file}
+    dlc_labels = {point: label for point, label in
+                  {'nose': args.DLC_nose, 'pharynx': args.DLC_pharynx, 'tail': args.DLC_tail}.items()
+                  if label is not None}
 
     # Check if odor-related parameters are provided
     has_odor_data = (args.odor_pos is not None and
@@ -278,9 +286,9 @@ def main(arg_list=None):
     # 8. DLC COORDINATE ADDITION
     # --------------------------------------------------
     # Add DLC coordinates if provided (no odor calculations yet)
-    if args.DLC_coords is not None and args.DLC_nose is not None and args.DLC_tail is not None:
+    if args.DLC_coords is not None and dlc_labels:
         df_worm_parameter = add_dlc_coordinates(
-            df_worm_parameter, args.DLC_coords, args.DLC_nose, args.DLC_tail,
+            df_worm_parameter, args.DLC_coords, dlc_labels,
             video_resolution_x, video_resolution_y, factor_px_to_mm, img_type
         )
 
@@ -378,21 +386,22 @@ def main(arg_list=None):
             'distance_to_odor_centroid', 'conc_at_centroid', f'conc_at_{skel_pos_0}',
             'dC_centroid', f'dC_{skel_pos_0}', f'distance_to_odor_{skel_pos_0}'
         ]
-        # Add DLC odor columns if they exist
-        dlc_odor_columns = [
-            'distance_to_odor_DLC_nose', 'distance_to_odor_DLC_tail',
-            'conc_at_DLC_nose', 'conc_at_DLC_tail',
-            'dC_DLC_nose', 'dC_DLC_tail', 'd_DLC_nose_tail_C'
-        ]
+        # Add DLC odor columns (every DLC body point + pairwise concentration differences) if they exist
+        dlc_points = get_dlc_points(df_worm_parameter)
+        dlc_odor_columns = [f'{prefix}_DLC_{p}' for p in dlc_points
+                            for prefix in ('distance_to_odor', 'conc_at', 'dC')]
+        dlc_odor_columns += [col for col in df_worm_parameter.columns
+                             if col.startswith('d_DLC_') and col.endswith('_C')]
         odor_columns.extend(dlc_odor_columns)
 
         # Filter to include only columns that exist in the DataFrame
         odor_columns = [col for col in odor_columns if col in df_worm_parameter.columns]
         columns_to_smooth.extend(odor_columns)
 
-    # Apply outlier replacement and smoothing
-    df_worm_parameter = replace_outliers_with_nan(df_worm_parameter, columns_to_smooth, threshold=2.576)
-    df_worm_parameter = apply_smoothing(df_worm_parameter, columns_to_smooth, fps, center_point)
+    # Apply smoothing; outliers are masked only in the copy used for the *_smoothed columns,
+    # so the per-frame columns are saved complete
+    df_worm_parameter = apply_smoothing(df_worm_parameter, columns_to_smooth, fps, center_point,
+                                        outlier_threshold=2.576)
 
     print("Data cleaning and smoothing complete.")
 
@@ -451,6 +460,9 @@ def main(arg_list=None):
             'dC_centroid_smoothed',
             f'dC_{skel_pos_0}_smoothed'
         ]
+        # DLC concentration traces for every body point
+        odor_time_series += [f'{prefix}_DLC_{p}_smoothed' for p in get_dlc_points(df_worm_parameter)
+                             for prefix in ('conc_at', 'dC')]
         # Filter to include only columns that exist in the DataFrame
         odor_time_series = [col for col in odor_time_series if col in df_worm_parameter.columns]
         time_series_columns.extend(odor_time_series)
