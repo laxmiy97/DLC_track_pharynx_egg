@@ -960,13 +960,27 @@ def plot_dynamic_binned(df, y_column, output_path, file_name, hue_column=None, b
 def create_improved_worm_animation(df1, df2, output_path, x_odor=None, y_odor=None, fps=30, arena_min_x=0,
                                    arena_max_x=10, arena_min_y=0, arena_max_y=10, nth_frame=1, nth_point=5,
                                    file_name="worm_animation.avi", conc_array=None, distance_array=None,
-                                   diffusion_time_offset=0):
+                                   diffusion_time_offset=0, signal_csv_path=None):
     import os
     import numpy as np
     import matplotlib.pyplot as plt
     import cv2
     from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+    import matplotlib.gridspec as gridspec
     from scipy.interpolate import interp1d
+    import glob
+
+    signal_df = None
+    column_to_plot = None
+    if signal_csv_path is None:
+        print("[signal] No signal_csv_path provided; skipping signal plot.")
+        signal = None
+    else:
+        signal = pd.read_csv(signal_csv_path, index_col=0)
+        signal_df = signal.copy()
+        signal_df['ratiometric'] = signal_df['gcamp_mean_top_bgsub_intensity'] / signal_df['rfp_mean_top_bgsub_intensity']
+        column_to_plot = 'ratiometric'
+        signal_df = signal_df[[column_to_plot]]
 
     has_odor_position = x_odor is not None and y_odor is not None
 
@@ -982,10 +996,20 @@ def create_improved_worm_animation(df1, df2, output_path, x_odor=None, y_odor=No
 
     full_path = os.path.join(output_path, file_name)
     width, height = 1280, 720
-    fourcc = cv2.VideoWriter_fourcc(*'DIVX')
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     out = cv2.VideoWriter(full_path, fourcc, fps, (width, height))
 
-    fig, (ax_overview, ax_detail) = plt.subplots(1, 2, figsize=(width / 50, height / 100), dpi=100)
+##new lines
+    fig = plt.figure(figsize=(width/50, height/100), dpi=100)
+    gs = gridspec.GridSpec(2, 2, height_ratios=[3, 1])  # top row taller
+
+    ax_overview = fig.add_subplot(gs[0,0])
+    ax_detail   = fig.add_subplot(gs[0,1])
+    ax_signal   = fig.add_subplot(gs[1,:])
+    ax_signal2  = ax_signal.twinx()
+##new lines
+
+    #fig, (ax_overview, ax_detail) = plt.subplots(1, 2, figsize=(width / 50, height / 100), dpi=100)
     canvas = FigureCanvas(fig)
 
     total_frames = min(len(df1), len(df2))
@@ -1008,6 +1032,31 @@ def create_improved_worm_animation(df1, df2, output_path, x_odor=None, y_odor=No
 
             ax_overview.clear()
             ax_detail.clear()
+            ##newlines
+            if signal_df is not None:
+                ax_signal.clear()
+                time_axis = np.arange(len(signal_df)) / fps  # if each row = one frame
+                current_time = frame_count / fps
+                ax_signal.plot(time_axis, signal_df[column_to_plot], color='green')
+                # red line at current time
+                ax_signal.axvline(current_time, color='red', linestyle='--')
+                ax_signal.set_xlim(0, time_axis[-1])
+                ax_signal.set_ylabel(column_to_plot)
+                ax_signal.set_xlabel("Time (s)")
+                ax_signal.set_title("Calcium Signal Trace")
+                
+                if 'conc_at_DLC_nose' in df2.columns:
+                    ax_signal2.clear()
+                    time_axis2   = np.arange(len(df2)) / fps
+                    ax_signal2.plot(time_axis2, df2['conc_at_DLC_nose'], color = 'mediumslateblue')
+                    ax_signal2.set_ylabel('conc_at_DLC_nose')
+                    ax_signal2.axvline(current_time, color='red', linestyle='--')
+
+                    # make both axes share the longest time range
+                    tmax = max(time_axis[-1], time_axis2[-1])
+                    ax_signal.set_xlim(0, tmax)
+                    ax_signal2.set_xlim(0, tmax)
+            ### newlines
 
             # Plot odor gradient if available
             if has_odor_position and conc_array is not None and distance_array is not None:

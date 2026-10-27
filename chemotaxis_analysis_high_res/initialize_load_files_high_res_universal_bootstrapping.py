@@ -68,6 +68,7 @@ def main(arg_list=None):
     # 1. ARGUMENT PARSING
     # --------------------------------------------------
     parser = argparse.ArgumentParser(description='Read CSV files and plot data')
+    parser.add_argument('--signal_csv_path', type=str, help='Full path to the signal CSV file', required=True)
     parser.add_argument('--reversal_annotation', help='Full path to the reversal annotation CSV file', required=True)
     parser.add_argument('--skeleton_spline', help='Full path to the skeleton spline CSV file', required=True)
     parser.add_argument('--worm_pos', help='Full path to the worm pos text file', required=True)
@@ -531,7 +532,8 @@ def main(arg_list=None):
             file_name="worm_movie.avi",
             conc_array=conc_gradient_array,
             distance_array=distance_array,
-            diffusion_time_offset=diffusion_time_offset
+            diffusion_time_offset=diffusion_time_offset,
+            signal_csv_path=args.signal_csv_path
         )
         video_generated = True
         print("Animation creation complete.")
